@@ -31,13 +31,14 @@ export const deployAndVerifyAndThen = async ({
 }) => {
   const { deploy } = hre.deployments
   const { deployer } = await hre.getNamedAccounts()
+  const deployConfig = getDeployConfig(hre.network.name)
 
   const result = await deploy(name, {
     contract,
     from: deployer,
     args,
     log: true,
-    waitConfirmations: hre.deployConfig.numDeployConfirmations,
+    waitConfirmations: deployConfig.numDeployConfirmations,
   })
 
   await hre.ethers.provider.waitForTransaction(result.transactionHash)
@@ -92,6 +93,8 @@ export const getAdvancedContract = (opts: {
   hre: any
   contract: Contract
 }): Contract => {
+  const deployConfig = getDeployConfig(opts.hre.network.name)
+
   // Temporarily override Object.defineProperty to bypass ether's object protection.
   const def = Object.defineProperty
   Object.defineProperty = (obj, propName, prop) => {
@@ -115,7 +118,7 @@ export const getAdvancedContract = (opts: {
       // We want to use the gas price that has been configured at the beginning of the deployment.
       // However, if the function being triggered is a "constant" (static) function, then we don't
       // want to provide a gas price because we're prone to getting insufficient balance errors.
-      let gasPrice = opts.hre.deployConfig.gasPrice || undefined
+      let gasPrice = deployConfig.gasPrice || undefined
       if (contract.interface.getFunction(fnName).constant) {
         gasPrice = 0
       }
@@ -147,7 +150,7 @@ export const getAdvancedContract = (opts: {
             return contract[fnName](...args)
           }
         } else if (
-          receipt.confirmations >= opts.hre.deployConfig.numDeployConfirmations
+          receipt.confirmations >= deployConfig.numDeployConfirmations
         ) {
           return tx
         }
@@ -163,7 +166,9 @@ export const fundAccount = async (
   address: string,
   amount: ethers.BigNumber
 ) => {
-  if ((hre as any).deployConfig.forked !== 'true') {
+  const deployConfig = getDeployConfig(hre.network.name)
+
+  if (!deployConfig.isForkedNetwork) {
     throw new Error('this method can only be used against a forked network')
   }
 
@@ -194,7 +199,9 @@ export const sendImpersonatedTx = async (opts: {
   gas: string
   args: any[]
 }) => {
-  if ((opts.hre as any).deployConfig.forked !== 'true') {
+  const deployConfig = getDeployConfig(opts.hre.network.name)
+
+  if (!deployConfig.isForkedNetwork) {
     throw new Error('this method can only be used against a forked network')
   }
 
@@ -268,3 +275,144 @@ export const isHardhatNode = async (hre) => {
 
 // Large balance to fund accounts with.
 export const BIG_BALANCE = ethers.BigNumber.from(`0xFFFFFFFFFFFFFFFFFFFF`)
+
+/**
+ * Defines the configuration for a deployment.
+ */
+export interface DeployConfig {
+  /**
+   * Name of the network to deploy to. Must be the name of one of the networks listed in
+   * hardhat.config.ts.
+   */
+  network: string
+
+  /**
+   * Whether or not this network is a forked network.
+   */
+  isForkedNetwork?: boolean
+
+  /**
+   * Optional number of confs to wait during deployment.
+   */
+  numDeployConfirmations?: number
+
+  /**
+   * Optional gas price to use for deployment transactions.
+   */
+  gasPrice?: string | number
+
+  /**
+   * Estimated average L1 block time in seconds.
+   */
+  l1BlockTimeSeconds: number
+
+  /**
+   * Gas limit for blocks on L2.
+   */
+  l2BlockGasLimit: number
+
+  /**
+   * Chain ID for the L2 network.
+   */
+  l2ChainId: number
+
+  /**
+   * Discount divisor used to calculate gas burn for L1 to L2 transactions.
+   */
+  ctcL2GasDiscountDivisor: number
+
+  /**
+   * Cost of the "enqueue" function in the CTC.
+   */
+  ctcEnqueueGasCost: number
+
+  /**
+   * Fault proof window in seconds.
+   */
+  sccFaultProofWindowSeconds: number
+
+  /**
+   * Sequencer publish window in seconds.
+   */
+  sccSequencerPublishWindowSeconds: number
+
+  /**
+   * Address of the Sequencer (publishes to CTC).
+   */
+  ovmSequencerAddress: string
+
+  /**
+   * Address of the Proposer (publishes to SCC).
+   */
+  ovmProposerAddress: string
+
+  /**
+   * Address of the account that will sign blocks.
+   */
+  ovmBlockSignerAddress: string
+
+  /**
+   * Address that will receive fees on L1.
+   */
+  ovmFeeWalletAddress: string
+
+  /**
+   * Address of the owner of the AddressManager contract on L1.
+   */
+  ovmAddressManagerOwner: string
+
+  /**
+   * Address of the owner of the GasPriceOracle contract on L2.
+   */
+  ovmGasPriceOracleOwner: string
+
+  /**
+   * Optional whitelist owner address.
+   */
+  ovmWhitelistOwner?: string
+
+  /**
+   * Optional initial overhead value for GPO (default: 2750).
+   */
+  gasPriceOracleOverhead?: number
+
+  /**
+   * Optional initial scalar value for GPO (default: 1500000).
+   */
+  gasPriceOracleScalar?: number
+
+  /**
+   * Optional initial decimals for GPO (default: 6).
+   */
+  gasPriceOracleDecimals?: number
+
+  /**
+   * Optional initial L1 base fee for GPO (default: 1).
+   */
+  gasPriceOracleL1BaseFee?: number
+
+  /**
+   * Optional initial L2 gas price for GPO (default: 1).
+   */
+  gasPriceOracleL2GasPrice?: number
+
+  /**
+   * Optional block number to enable the Berlin hardfork (default: 0).
+   */
+  hfBerlinBlock?: number
+}
+
+/**
+ * Gets the deploy config for the given network.
+ *
+ * @param network Network name.
+ * @returns Deploy config for the given network.
+ */
+export const getDeployConfig = (network: string): DeployConfig => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require(`../deploy-config/${network}.ts`)
+  } catch (err) {
+    throw new Error(`no deploy config found for network: ${network}`)
+  }
+}

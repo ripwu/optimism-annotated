@@ -3,10 +3,11 @@ import { DeployFunction } from 'hardhat-deploy/dist/types'
 import { hexStringEquals, awaitCondition } from '@eth-optimism/core-utils'
 
 /* Imports: Internal */
-import { getContractFromArtifact } from '../src/deploy-utils'
+import { getContractFromArtifact, getDeployConfig } from '../src/deploy-utils'
 import { names } from '../src/address-names'
 
 const deployFn: DeployFunction = async (hre) => {
+  const deployConfig = getDeployConfig(hre.network.name)
   const { deployer } = await hre.getNamedAccounts()
 
   // There's a risk that we could get front-run during a fresh deployment, which would brick this
@@ -43,7 +44,7 @@ const deployFn: DeployFunction = async (hre) => {
   )
 
   console.log(`Setting Proxy__OVM_L1CrossDomainMessenger owner...`)
-  const owner = (hre as any).deployConfig.ovmAddressManagerOwner
+  const owner = deployConfig.ovmAddressManagerOwner
   await Proxy__OVM_L1CrossDomainMessenger.transferOwnership(owner)
 
   console.log(`Checking that the contract owner was correctly set...`)

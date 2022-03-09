@@ -1,4 +1,3 @@
-export * from './deploy'
 export * from './l2-gasprice'
 export * from './set-owner'
 export * from './validate-address-dictator'

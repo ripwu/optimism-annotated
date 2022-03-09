@@ -5,10 +5,13 @@ import { DeployFunction } from 'hardhat-deploy/dist/types'
 import {
   deployAndVerifyAndThen,
   getContractFromArtifact,
+  getDeployConfig,
 } from '../src/deploy-utils'
 import { names } from '../src/address-names'
 
 const deployFn: DeployFunction = async (hre) => {
+  const deployConfig = getDeployConfig(hre.network.name)
+
   const Lib_AddressManager = await getContractFromArtifact(
     hre,
     names.unmanaged.Lib_AddressManager
@@ -19,9 +22,9 @@ const deployFn: DeployFunction = async (hre) => {
     name: names.managed.contracts.CanonicalTransactionChain,
     args: [
       Lib_AddressManager.address,
-      (hre as any).deployConfig.ctcMaxTransactionGasLimit,
-      (hre as any).deployConfig.ctcL2GasDiscountDivisor,
-      (hre as any).deployConfig.ctcEnqueueGasCost,
+      deployConfig.l2BlockGasLimit,
+      deployConfig.ctcL2GasDiscountDivisor,
+      deployConfig.ctcEnqueueGasCost,
     ],
   })
 }

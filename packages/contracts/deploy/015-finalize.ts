@@ -3,10 +3,12 @@ import { DeployFunction } from 'hardhat-deploy/dist/types'
 import { hexStringEquals, awaitCondition } from '@eth-optimism/core-utils'
 
 /* Imports: Internal */
-import { getContractFromArtifact } from '../src/deploy-utils'
+import { getContractFromArtifact, getDeployConfig } from '../src/deploy-utils'
 
 const deployFn: DeployFunction = async (hre) => {
+  const deployConfig = getDeployConfig(hre.network.name)
   const { deployer } = await hre.getNamedAccounts()
+
   const Lib_AddressManager = await getContractFromArtifact(
     hre,
     'Lib_AddressManager',
@@ -15,7 +17,7 @@ const deployFn: DeployFunction = async (hre) => {
     }
   )
 
-  const owner = (hre as any).deployConfig.ovmAddressManagerOwner
+  const owner = deployConfig.ovmAddressManagerOwner
   const remoteOwner = await Lib_AddressManager.owner()
   if (hexStringEquals(owner, remoteOwner)) {
     console.log(
