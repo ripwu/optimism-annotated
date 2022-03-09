@@ -27,10 +27,12 @@ export const handleEventsStateBatchAppended: EventHandlerSet<
       blockNumber: eventBlock.number,
       submitter: l1Transaction.from,
       l1TransactionHash: l1Transaction.hash,
-      l1TransactionData: l1Transaction.data,
+      l1TransactionData: l1Transaction.data, // calldata
     }
   },
   parseEvent: (event, extraData) => {
+    // 函数原型 function _appendBatch(bytes32[] memory _batch, bytes memory _extraData) internal;
+    // 解析 calldata 参数[0](即 _batch)，得到 stateRoots
     const stateRoots = getContractFactory(
       'StateCommitmentChain'
     ).interface.decodeFunctionData(
@@ -38,6 +40,7 @@ export const handleEventsStateBatchAppended: EventHandlerSet<
       extraData.l1TransactionData
     )[0]
 
+    // 遍历 stateRoots 数组，得到 stateRootEntries
     const stateRootEntries: StateRootEntry[] = []
     for (let i = 0; i < stateRoots.length; i++) {
       stateRootEntries.push({
@@ -58,7 +61,7 @@ export const handleEventsStateBatchAppended: EventHandlerSet<
       size: event.args._batchSize.toNumber(),
       root: event.args._batchRoot,
       prevTotalElements: event.args._prevTotalElements.toNumber(),
-      extraData: event.args._extraData,
+      extraData: event.args._extraData, // abi.encode(block.timestamp, msg.sender)
       l1TransactionHash: extraData.l1TransactionHash,
       type: 'LEGACY', // There is currently only 1 state root batch type
     }

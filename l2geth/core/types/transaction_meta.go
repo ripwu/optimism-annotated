@@ -51,7 +51,7 @@ type TransactionMeta struct {
 	L1BlockNumber   *big.Int        `json:"l1BlockNumber"`
 	L1Timestamp     uint64          `json:"l1Timestamp"`
 	L1MessageSender *common.Address `json:"l1MessageSender" gencodec:"required"`
-	QueueOrigin     QueueOrigin     `json:"queueOrigin" gencodec:"required"`
+	QueueOrigin     QueueOrigin     `json:"queueOrigin" gencodec:"required"` // sequencer / l1
 	// The canonical transaction chain index
 	Index *uint64 `json:"index" gencodec:"required"`
 	// The queue index, nil for queue origin sequencer transactions

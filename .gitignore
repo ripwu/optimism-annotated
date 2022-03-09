@@ -26,3 +26,6 @@ packages/data-transport-layer/db
 .env*
 !.env.example
 *.log
+
+.idea
+package-lock.json

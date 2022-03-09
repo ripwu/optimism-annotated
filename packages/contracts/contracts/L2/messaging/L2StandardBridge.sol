@@ -150,6 +150,12 @@ contract L2StandardBridge is IL2ERC20Bridge, CrossDomainEnabled {
         // verify the deposited token on L1 matches the L2 deposited token representation here
         if (
             // slither-disable-next-line reentrancy-events
+
+            // c01e1bd6  =>  l1Token()
+            // 40c10f19  =>  mint(address,uint256)
+            // 9dc29fac  =>  burn(address,uint256)
+            // => 0x1d1d8b63 = l1Token ^ mint ^ burn
+
             ERC165Checker.supportsInterface(_l2Token, 0x1d1d8b63) &&
             _l1Token == IL2StandardERC20(_l2Token).l1Token()
         ) {

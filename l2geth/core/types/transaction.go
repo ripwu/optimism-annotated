@@ -303,6 +303,8 @@ func (tx *Transaction) AsMessage(s Signer) (Message, error) {
 
 	var err error
 	if rcfg.UsingOVM {
+		// XXX 注意这里
+		// transaction 转 Message 时，对于 L1->L2 的消息，取 meta.L1MessageSender 作为 Origin
 		if tx.meta.QueueOrigin == QueueOriginL1ToL2 && tx.meta.L1MessageSender != nil {
 			msg.from = *tx.meta.L1MessageSender
 		} else {

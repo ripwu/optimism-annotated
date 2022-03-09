@@ -62,6 +62,7 @@ type StateTransition struct {
 	data       []byte
 	state      vm.StateDB
 	evm        *vm.EVM
+
 	// UsingOVM
 	l1Fee *big.Int
 }
@@ -176,7 +177,9 @@ func (st *StateTransition) useGas(amount uint64) error {
 
 func (st *StateTransition) buyGas() error {
 	mgval := new(big.Int).Mul(new(big.Int).SetUint64(st.msg.Gas()), st.gasPrice)
+
 	if rcfg.UsingOVM {
+		// 如果是 L2 -> L2 消息，需要加上上链费用 l1Fee
 		// Only charge the L1 fee for QueueOrigin sequencer transactions
 		if st.msg.QueueOrigin() == types.QueueOriginSequencer {
 			mgval = mgval.Add(mgval, st.l1Fee)
@@ -185,6 +188,7 @@ func (st *StateTransition) buyGas() error {
 			}
 		}
 	}
+
 	if st.state.GetBalance(st.msg.From()).Cmp(mgval) < 0 {
 		return errInsufficientBalanceForGas
 	}
@@ -200,12 +204,17 @@ func (st *StateTransition) buyGas() error {
 
 func (st *StateTransition) preCheck() error {
 	// Make sure this transaction's nonce is correct.
+
+	// 如果需要检查 nonce
 	if st.msg.CheckNonce() {
 		if rcfg.UsingOVM {
+			// 如果是 L1->L2 消息，跳过 nonce 检查，直接调用 bugGas()
 			if st.msg.QueueOrigin() == types.QueueOriginL1ToL2 {
 				return st.buyGas()
 			}
 		}
+
+		// 正常的检查 nonce 逻辑
 		nonce := st.state.GetNonce(st.msg.From())
 		if nonce < st.msg.Nonce() {
 			return ErrNonceTooHigh
@@ -269,10 +278,12 @@ func (st *StateTransition) TransitionDb() (ret []byte, usedGas uint64, failed bo
 		}
 	}
 	st.refundGas()
+
 	if rcfg.UsingOVM {
 		// The L2 Fee is the same as the fee that is charged in the normal geth
 		// codepath. Add the L1 fee to the L2 fee for the total fee that is sent
 		// to the sequencer.
+		// l2 Sequencer 矿工收入
 		l2Fee := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice)
 		fee := new(big.Int).Add(st.l1Fee, l2Fee)
 		st.state.AddBalance(evm.Coinbase, fee)

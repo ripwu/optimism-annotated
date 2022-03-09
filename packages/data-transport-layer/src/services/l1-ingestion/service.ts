@@ -461,7 +461,8 @@ export class L1IngestionService extends BaseService<L1IngestionServiceOptions> {
     const filter =
       this.state.contracts.Lib_AddressManager.filters.OwnershipTransferred()
 
-    for (let i = 0; i < currentL1Block; i += 2000) {
+    const createdAtBlock = 12686687;
+    for (let i = createdAtBlock; i < currentL1Block; i += 2000) {
       const start = i
       const end = Math.min(i + 2000, currentL1Block)
       this.logger.info(`Searching for ${filter} from ${start} to ${end}`)

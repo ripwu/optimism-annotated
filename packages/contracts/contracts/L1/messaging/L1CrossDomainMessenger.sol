@@ -198,9 +198,11 @@ contract L1CrossDomainMessenger is
             "Cannot send L2->L1 messages to L1 system contracts."
         );
 
+        // 修改 xDomainMsgSender 为 _sender
         xDomainMsgSender = _sender;
         // slither-disable-next-line reentrancy-no-eth, reentrancy-events, reentrancy-benign
         (bool success, ) = _target.call(_message);
+        // 重置 xDomainMsgSender
         // slither-disable-next-line reentrancy-benign
         xDomainMsgSender = Lib_DefaultValues.DEFAULT_XDOMAIN_SENDER;
 

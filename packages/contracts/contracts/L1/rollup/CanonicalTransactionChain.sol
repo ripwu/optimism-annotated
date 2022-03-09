@@ -38,10 +38,15 @@ contract CanonicalTransactionChain is ICanonicalTransactionChain, Lib_AddressRes
     uint256 public enqueueL2GasPrepaid;
 
     // Encoding-related (all in bytes)
+    // 参考 ICanonicalTransactionChain.BatchContext
     uint256 internal constant BATCH_CONTEXT_SIZE = 16;
+
     // slither-disable-next-line unused-state
     uint256 internal constant BATCH_CONTEXT_LENGTH_POS = 12;
+
+    // 4 字节 selector + 11 字节 header (参考 appendSequencerBatch)
     uint256 internal constant BATCH_CONTEXT_START_POS = 15;
+
     // slither-disable-next-line unused-state
     uint256 internal constant TX_DATA_HEADER_SIZE = 3;
     // slither-disable-next-line unused-state
@@ -57,6 +62,11 @@ contract CanonicalTransactionChain is ICanonicalTransactionChain, Lib_AddressRes
      * Queue State *
      ***************/
 
+    // data availability 不仅要求交易要在 L1 上的 calldata 存储，同时要求交易确定顺序 (特别是 L1 -> L2 交友，与 L2 原生交易混排的顺序)
+    // Optimism 由 L2 Sequencer 决定，敲定的顺序表达在 appendSequencerQueue() calldata 的 contexts.
+
+    // 用户在 L1 上直接请求当前合约 enqueue()，将导致交易被压入 queueElements
+    // _nextQueueIndex 表示由 L2 batch-submitter 调用 L1 appendSequencerQueue()，其 calldata 中确认的 queued Elem 的数量
     uint40 private _nextQueueIndex; // index of the first queue element not yet included
     Lib_OVMCodec.QueueElement[] queueElements;
 
@@ -224,6 +234,9 @@ contract CanonicalTransactionChain is ICanonicalTransactionChain, Lib_AddressRes
 
         require(_gasLimit >= MIN_ROLLUP_TX_GAS, "Transaction gas limit too low to enqueue.");
 
+        // 结合文档理解
+        // [How should we pay gas for deposits? #32](https://github.com/ethereum-optimism/optimistic-specs/discussions/32)
+        //
         // Transactions submitted to the queue lack a method for paying gas fees to the Sequencer.
         // So we need to prevent spam attacks by ensuring that the cost of enqueueing a transaction
         // from L1 to L2 is not underpriced. For transaction with a high L2 gas limit, we do this by
@@ -288,8 +301,11 @@ contract CanonicalTransactionChain is ICanonicalTransactionChain, Lib_AddressRes
         uint24 totalElementsToAppend;
         uint24 numContexts;
         assembly {
+            // 偏移 4 字节为 selector，大小为 (256 - 216) / 8 = 5 字节
             shouldStartAtElement := shr(216, calldataload(4))
-            totalElementsToAppend := shr(232, calldataload(9))
+            // 大小为 (256 - 232) / 8 = 3 字节
+            totalElementsToAppend := shr(232, calldataload(9)) // L2 区块数
+            // 大小为 (256 - 232) / 8 = 3 字节
             numContexts := shr(232, calldataload(12))
         }
 
@@ -360,8 +376,8 @@ contract CanonicalTransactionChain is ICanonicalTransactionChain, Lib_AddressRes
         // Cache the previous blockhash to ensure all transaction data can be retrieved efficiently.
         // slither-disable-next-line reentrancy-no-eth, reentrancy-events
         _appendBatch(
-            blockhash(block.number - 1),
-            totalElementsToAppend,
+            blockhash(block.number - 1), // 这里用的是前一个区块的哈希.. TODO
+            totalElementsToAppend, // L2 区块数
             numQueuedTransactions,
             blockTimestamp,
             blockNumber
@@ -397,10 +413,10 @@ contract CanonicalTransactionChain is ICanonicalTransactionChain, Lib_AddressRes
         uint256 ctxBlockNumber;
 
         assembly {
-            numSequencedTransactions := shr(232, calldataload(contextPtr))
-            numSubsequentQueueTransactions := shr(232, calldataload(add(contextPtr, 3)))
-            ctxTimestamp := shr(216, calldataload(add(contextPtr, 6)))
-            ctxBlockNumber := shr(216, calldataload(add(contextPtr, 11)))
+            numSequencedTransactions := shr(232, calldataload(contextPtr)) // (256 - 232) / 8 = 3 字节
+            numSubsequentQueueTransactions := shr(232, calldataload(add(contextPtr, 3))) // (256 - 232) / 8 = 5 字节
+            ctxTimestamp := shr(216, calldataload(add(contextPtr, 6))) // (256 - 216) / 8 = 5 字节
+            ctxBlockNumber := shr(216, calldataload(add(contextPtr, 11))) // (256 - 216) / 8 = 5 字节
         }
 
         return
@@ -495,7 +511,7 @@ contract CanonicalTransactionChain is ICanonicalTransactionChain, Lib_AddressRes
      */
     function _appendBatch(
         bytes32 _transactionRoot,
-        uint256 _batchSize,
+        uint256 _batchSize, // L2 区块数
         uint256 _numQueuedTransactions,
         uint40 _timestamp,
         uint40 _blockNumber

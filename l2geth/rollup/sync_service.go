@@ -58,7 +58,9 @@ type SyncService struct {
 	syncing                        atomic.Value
 	chainHeadSub                   event.Subscription
 	OVMContext                     OVMContext
+	// 默认 15 秒，实际配置为 500ms (ops/envs/geth.env 中的变量 ROLLUP_POLL_INTERVAL_FLAG)
 	pollInterval                   time.Duration
+	// 默认 3 分钟，实际配置为 15 秒 (l2geth/scripts/start.sh 中的变量 ROLLUP_TIMESTAMP_REFRESH)
 	timestampRefreshThreshold      time.Duration
 	chainHeadCh                    chan core.ChainHeadEvent
 	backend                        Backend
@@ -103,6 +105,8 @@ func NewSyncService(ctx context.Context, cfg Config, txpool *core.TxPool, bc *co
 	if chainID == nil {
 		return nil, errors.New("Must configure with chain id")
 	}
+
+	// packages/data-transport-layer HTTP 服务端口
 	// Initialize the rollup client
 	client := NewClient(cfg.RollupClientHttp, chainID)
 	log.Info("Configured rollup client", "url", cfg.RollupClientHttp, "chain-id", chainID.Uint64(), "ctc-deploy-height", cfg.CanonicalTransactionChainDeployHeight)
@@ -131,7 +135,10 @@ func NewSyncService(ctx context.Context, cfg Config, txpool *core.TxPool, bc *co
 		syncing:                        atomic.Value{},
 		bc:                             bc,
 		txpool:                         txpool,
+
+		// 注意这里 capacity 为 1
 		chainHeadCh:                    make(chan core.ChainHeadEvent, 1),
+
 		client:                         client,
 		db:                             db,
 		pollInterval:                   pollInterval,
@@ -190,7 +197,7 @@ func NewSyncService(ctx context.Context, cfg Config, txpool *core.TxPool, bc *co
 		// Initialize the latest L1 data here to make sure that
 		// it happens before the RPC endpoints open up
 		// Only do it if the sync service is enabled so that this
-		// can be ran without needing to have a configured RollupClient.
+		// can be run without needing to have a configured RollupClient.
 		err := service.initializeLatestL1(cfg.CanonicalTransactionChainDeployHeight)
 		if err != nil {
 			return nil, fmt.Errorf("Cannot initialize latest L1 data: %w", err)
@@ -238,6 +245,7 @@ func (s *SyncService) Start() error {
 		return nil
 	}
 	log.Info("Initializing Sync Service")
+
 	if err := s.updateGasPriceOracleCache(nil); err != nil {
 		return err
 	}
@@ -424,10 +432,13 @@ func (s *SyncService) verify() error {
 
 // SequencerLoop is the polling loop that runs in sequencer mode. It sequences
 // transactions and then updates the EthContext.
+// 主循环
 func (s *SyncService) SequencerLoop() {
 	log.Info("Starting Sequencer Loop", "poll-interval", s.pollInterval, "timestamp-refresh-threshold", s.timestampRefreshThreshold)
-	t := time.NewTicker(s.pollInterval)
+
+	t := time.NewTicker(s.pollInterval) // 默认 15 秒
 	defer t.Stop()
+
 	for ; true; <-t.C {
 		s.txLock.Lock()
 		if err := s.sequence(); err != nil {
@@ -435,6 +446,7 @@ func (s *SyncService) SequencerLoop() {
 		}
 		s.txLock.Unlock()
 
+		// 更新 L1 区块号
 		if err := s.updateL1BlockNumber(); err != nil {
 			log.Error("Could not update execution context", "error", err)
 		}
@@ -448,6 +460,8 @@ func (s *SyncService) SequencerLoop() {
 // L1 is the source of truth. The sequencer concurrently accepts user
 // transactions via the RPC. When reorg logic is enabled, this should
 // also call `syncBatchesToTip`
+// 根据最后一句注释，以及 PR #1489 来看，还没处理 reorg 的逻辑..
+// [l2geth: no longer sync batches as sequencer #1489](https://github.com/ethereum-optimism/optimism/pull/1489)
 func (s *SyncService) sequence() error {
 	if err := s.syncQueueToTip(); err != nil {
 		return fmt.Errorf("Sequencer cannot sequence queue: %w", err)
@@ -722,36 +736,47 @@ func (s *SyncService) SetLatestBatchIndex(index *uint64) {
 
 // applyTransaction is a higher level API for applying a transaction
 func (s *SyncService) applyTransaction(tx *types.Transaction) error {
+	// Index != nil 说明是历史上已经被定序的交易，已经有了明确的顺序.
 	if tx.GetMeta().Index != nil {
 		return s.applyIndexedTransaction(tx)
 	}
+
+	// 正常出块时，走下面的代码
 	return s.applyTransactionToTip(tx)
 }
 
-// applyIndexedTransaction applys a transaction that has an index. This means
+// applyIndexedTransaction apply a transaction that has an index. This means
 // that the source of the transaction was either a L1 batch or from the
 // sequencer.
 func (s *SyncService) applyIndexedTransaction(tx *types.Transaction) error {
 	if tx == nil {
 		return errors.New("Transaction is nil in applyIndexedTransaction")
 	}
+
 	index := tx.GetMeta().Index
 	if index == nil {
 		return errors.New("No index found in applyIndexedTransaction")
 	}
+
 	log.Trace("Applying indexed transaction", "index", *index)
+
 	next := s.GetNextIndex()
+
 	if *index == next {
 		return s.applyTransactionToTip(tx)
 	}
+
+	// XXX 这里是什么意思???
 	if *index < next {
 		return s.applyHistoricalTransaction(tx)
 	}
+
 	return fmt.Errorf("Received tx at index %d when looking for %d", *index, next)
 }
 
 // applyHistoricalTransaction will compare a historical transaction against what
 // is locally indexed. This will trigger a reorg in the future
+// 处理历史交易 (比如 L1 上的 enqueue 队列回滚)
 func (s *SyncService) applyHistoricalTransaction(tx *types.Transaction) error {
 	if tx == nil {
 		return errors.New("Transaction is nil in applyHistoricalTransaction")
@@ -760,41 +785,56 @@ func (s *SyncService) applyHistoricalTransaction(tx *types.Transaction) error {
 	if index == nil {
 		return errors.New("No index is found in applyHistoricalTransaction")
 	}
+
 	// Handle the off by one
 	block := s.bc.GetBlockByNumber(*index + 1)
 	if block == nil {
 		return fmt.Errorf("Block %d is not found", *index+1)
 	}
+
 	txs := block.Transactions()
 	if len(txs) != 1 {
 		return fmt.Errorf("More than one transaction found in block %d", *index+1)
 	}
+
 	if !isCtcTxEqual(tx, txs[0]) {
 		log.Error("Mismatched transaction", "index", *index)
+		// TODO 这里不需要返回错误???
 	} else {
 		log.Debug("Historical transaction matches", "index", *index, "hash", tx.Hash().Hex())
 	}
+
 	return nil
 }
-
+enqueue
 // applyTransactionToTip will do sanity checks on the transaction before
 // applying it to the tip. It blocks until the transaction has been included in
 // the chain. It is assumed that validation around the index has already
 // happened.
+// 调用来源
+// 1. L1 -> L2
+//   SyncService.SequencerLoop() -> sequencer() -> syncQueueToTip() -> syncToTip()-> syncQueue() -> syncQueueTransactionRange() -> applyTransaction() -> applyTransactionToTip()
+// 2. L2 -> L2
+//    PublicTransactionPoolAPI.SendRawTransaction()
+//     -> EthAPIBackend.SendTx()
+//       -> SyncService.ValidateAndApplySequencerTransaction() -> applyTransaction() -> applyTransactionToTip()
 func (s *SyncService) applyTransactionToTip(tx *types.Transaction) error {
 	if tx == nil {
 		return errors.New("nil transaction passed to applyTransactionToTip")
 	}
+
 	// Queue Origin L1 to L2 transactions must have a timestamp that is set by
 	// the L1 block that holds the transaction. This should never happen but is
 	// a sanity check to prevent fraudulent execution.
-	// No need to unlock here as the lock is only taken when its a queue origin
+	// No need to unlock here as the lock is only taken when it's a queue origin
 	// sequencer transaction.
 	if tx.QueueOrigin() == types.QueueOriginL1ToL2 {
 		if tx.L1Timestamp() == 0 {
 			return fmt.Errorf("Queue origin L1 to L2 transaction without a timestamp: %s", tx.Hash().Hex())
 		}
 	}
+
+	// XXX 注意注释，实际上 L1BlockTimestamp 不等于 L1->L2 交易在 L1 的出块时间
 
 	// If there is no L1 timestamp assigned to the transaction, then assign a
 	// timestamp to it. The property that L1 to L2 transactions have the same
@@ -812,19 +852,30 @@ func (s *SyncService) applyTransactionToTip(tx *types.Transaction) error {
 	// network split.
 	// Note that it should never be possible for the timestamp to be set to
 	// 0 when running as a verifier.
+
 	shouldMalleateTimestamp := !s.verifier && tx.QueueOrigin() == types.QueueOriginL1ToL2
 	if tx.L1Timestamp() == 0 || shouldMalleateTimestamp {
+		// 注意两种交易都会进来这里，换句话说，L2->L2 交易也会被设置 L1Timestamp
+		//
+		// 如果是 L1->L2 交易，tx.L1Timestamp() > 0 但 tx.QueueOrigin() == types.QueueOriginL1ToL2
+		// 如果是 L2->L2 交易，tx.L1Timestamp() 为 0
+
 		// Get the latest known timestamp
 		current := time.Unix(int64(ts), 0)
 		// Get the current clocktime
 		now := time.Now()
+
 		// If enough time has passed, then assign the
 		// transaction to have the timestamp now. Otherwise,
 		// use the current timestamp
+		// 如果当前时间与 LatestL1Timestamp 间隔超过 15 秒，取当前时间
 		if now.Sub(current) > s.timestampRefreshThreshold {
 			current = now
 		}
+
 		log.Info("Updating latest timestamp", "timestamp", current, "unix", current.Unix())
+
+		// 将两种交易的 L1Timestamp 改为 LatestL1Timestamp 或 当前时间
 		tx.SetL1Timestamp(uint64(current.Unix()))
 	} else if tx.L1Timestamp() == 0 && s.verifier {
 		// This should never happen
@@ -839,6 +890,7 @@ func (s *SyncService) applyTransactionToTip(tx *types.Transaction) error {
 	if l1BlockNumber == nil {
 		tx.SetL1BlockNumber(bn)
 	} else if l1BlockNumber.Uint64() > bn {
+		// 更新 LatestL1BlockNumber
 		s.SetLatestL1BlockNumber(l1BlockNumber.Uint64())
 	} else if l1BlockNumber.Uint64() < bn {
 		// l1BlockNumber < latest l1BlockNumber
@@ -848,16 +900,19 @@ func (s *SyncService) applyTransactionToTip(tx *types.Transaction) error {
 	}
 
 	// Store the latest timestamp value
+	// 更新 LatestL1Timestamp
 	if tx.L1Timestamp() > ts {
 		s.SetLatestL1Timestamp(tx.L1Timestamp())
 	}
 
 	index := s.GetLatestIndex()
+
+	// 不管是 L1->L2 还是 L2->L2 交易，都由 Sequencer 在这里分配交易顺序
 	if tx.GetMeta().Index == nil {
 		if index == nil {
 			tx.SetIndex(0)
 		} else {
-			tx.SetIndex(*index + 1)
+			tx.SetIndex(*index + 1) // 连续
 		}
 	}
 
@@ -865,6 +920,8 @@ func (s *SyncService) applyTransactionToTip(tx *types.Transaction) error {
 	// the case where the index is updated but the
 	// transaction isn't yet added to the chain
 	s.SetLatestIndex(tx.GetMeta().Index)
+
+	// 如果来自 L1，设置 LatestEnqueueIndex
 	if tx.GetMeta().QueueIndex != nil {
 		s.SetLatestEnqueueIndex(tx.GetMeta().QueueIndex)
 	}
@@ -878,23 +935,26 @@ func (s *SyncService) applyTransactionToTip(tx *types.Transaction) error {
 		Txs:   txs,
 		ErrCh: errCh,
 	})
+
 	// Block until the transaction has been added to the chain
 	log.Trace("Waiting for transaction to be added to chain", "hash", tx.Hash().Hex())
 
 	select {
-	case err := <-errCh:
+	case err := <-errCh: // 阻塞等待
 		log.Error("Got error waiting for transaction to be added to chain", "msg", err)
+		// 回退 latestL1xxx 和 LatestIndex
 		s.SetLatestL1Timestamp(ts)
 		s.SetLatestL1BlockNumber(bn)
 		s.SetLatestIndex(index)
 		return err
-	case <-s.chainHeadCh:
+	case <-s.chainHeadCh: // 阻塞等待
 		// Update the cache when the transaction is from the owner
 		// of the gas price oracle
 		sender, _ := types.Sender(s.signer, tx)
 		owner := s.GasPriceOracleOwnerAddress()
 		if owner != nil && sender == *owner {
 			if err := s.updateGasPriceOracleCache(nil); err != nil {
+				// 回退 latestL1xxx 和 LatestIndex
 				s.SetLatestL1Timestamp(ts)
 				s.SetLatestL1BlockNumber(bn)
 				s.SetLatestIndex(index)
@@ -927,6 +987,8 @@ func (s *SyncService) applyBatchedTransaction(tx *types.Transaction) error {
 }
 
 // verifyFee will verify that a valid fee is being paid.
+// 对于 L2->L2 交易，检查费用
+// 参考 [Transaction fees on L2](https://community.optimism.io/docs/developers/build/transaction-fees/)
 func (s *SyncService) verifyFee(tx *types.Transaction) error {
 	fee, err := fees.CalculateTotalFee(tx, s.RollupGpo)
 	if err != nil {
@@ -940,10 +1002,12 @@ func (s *SyncService) verifyFee(tx *types.Transaction) error {
 	if tx.GasPrice().Cmp(common.Big0) != 0 {
 		cost = cost.Add(cost, fee)
 	}
+
 	state, err := s.bc.State()
 	if err != nil {
 		return err
 	}
+
 	from, err := types.Sender(s.signer, tx)
 	if err != nil {
 		return fmt.Errorf("invalid transaction: %w", core.ErrInvalidSender)
@@ -997,12 +1061,18 @@ func (s *SyncService) verifyFee(tx *types.Transaction) error {
 		}
 		return err
 	}
+
 	return nil
 }
 
+// ValidateAndApplySequencerTransaction
 // Higher level API for applying transactions. Should only be called for
 // queue origin sequencer transactions, as the contracts on L1 manage the same
 // validity checks that are done here.
+// 从 RPC 收到交易后不经过 txpool 和 p2p 广播，直接执行
+// PublicTransactionPoolAPI.SendRawTransaction()
+//   -> EthAPIBackend.SendTx()
+//     -> SyncService.ValidateAndApplySequencerTransaction()
 func (s *SyncService) ValidateAndApplySequencerTransaction(tx *types.Transaction) error {
 	if s.verifier {
 		return errors.New("Verifier does not accept transactions out of band")
@@ -1010,20 +1080,27 @@ func (s *SyncService) ValidateAndApplySequencerTransaction(tx *types.Transaction
 	if tx == nil {
 		return errors.New("nil transaction passed to ValidateAndApplySequencerTransaction")
 	}
+
 	s.txLock.Lock()
 	defer s.txLock.Unlock()
+
+	// 检查 fee，包括 L1 上链费用
 	if err := s.verifyFee(tx); err != nil {
 		return err
 	}
+
 	log.Trace("Sequencer transaction validation", "hash", tx.Hash().Hex())
 
 	qo := tx.QueueOrigin()
 	if qo != types.QueueOriginSequencer {
 		return fmt.Errorf("invalid transaction with queue origin %s", qo.String())
 	}
+
+	// 检查 IntrinsicGas 和 nonce 等
 	if err := s.txpool.ValidateTx(tx); err != nil {
 		return fmt.Errorf("invalid transaction: %w", err)
 	}
+
 	if err := s.applyTransaction(tx); err != nil {
 		return err
 	}
@@ -1108,6 +1185,9 @@ func (s *SyncService) syncToTip(sync syncer, getTip indexGetter) error {
 }
 
 // sync will sync a range of items
+// @param getLatest 远端最新 index
+// @param getNext 本地已同步 index + 1
+// @param syncer 同步 [getNext, getLatest] 到本地
 func (s *SyncService) sync(getLatest indexGetter, getNext nextGetter, syncer rangeSyncer) (*uint64, error) {
 	latestIndex, err := getLatest()
 	if err != nil {

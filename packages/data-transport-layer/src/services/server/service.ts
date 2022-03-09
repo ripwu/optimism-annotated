@@ -432,6 +432,7 @@ export class L1TransportServer extends BaseService<L1TransportServerOptions> {
           }
         }
 
+        // 如果 enqueue 未被 SequencerBatchAppended 确认，查询返回的 ctcIndex 应该为 nil
         const ctcIndex = await this.state.db.getTransactionIndexByQueueIndex(
           enqueue.index
         )

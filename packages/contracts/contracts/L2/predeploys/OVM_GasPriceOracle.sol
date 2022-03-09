@@ -20,16 +20,22 @@ contract OVM_GasPriceOracle is Ownable {
      * Variables *
      *************/
 
+    // https://optimistic.etherscan.io/address/0x420000000000000000000000000000000000000F#readContract
+
     // Current L2 gas price
-    uint256 public gasPrice;
+    uint256 public gasPrice; // 100000
+
     // Current L1 base fee
-    uint256 public l1BaseFee;
+    uint256 public l1BaseFee; // 由 gas-oracle 每隔15秒从 L1 统计平均值后设置
+
     // Amortized cost of batch submission per transaction
-    uint256 public overhead;
+    uint256 public overhead; // 2100
+
     // Value to scale the fee up by
-    uint256 public scalar;
+    uint256 public scalar; // 1240000 (1.240000)
+
     // Number of decimals of the scalar
-    uint256 public decimals;
+    uint256 public decimals; // 6
 
     /***************
      * Constructor *

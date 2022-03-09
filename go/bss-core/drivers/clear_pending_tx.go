@@ -130,7 +130,7 @@ func ClearPendingTx(
 	}
 }
 
-// SignClearingTx creates a signed clearing tranaction which sends 0 ETH back to
+// SignClearingTx creates a signed clearing transaction which sends 0 ETH back to
 // the sender's address. EstimateGas is used to set an appropriate gas limit.
 func SignClearingTx(
 	name string,

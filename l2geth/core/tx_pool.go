@@ -553,8 +553,12 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if !local && pool.gasPrice.Cmp(tx.GasPrice()) > 0 {
 		return ErrUnderpriced
 	}
+
 	// Ensure the transaction adheres to nonce ordering
 	if rcfg.UsingOVM {
+		// 特殊处理：
+		// 因为 txpool 被设计为 queue 和 pending 双队列，对于使用更大 nonce 的交易，会被放入 pending 队列 (要求 validateTx 返回 true)
+		// 而在 Optimism Sequencer 中，没有 txpool，每笔新到的交易都会马上被执行，所以这里要求 nonce 连续 (对于 nonce 更大的交易，直接返回 false)
 		if pool.currentState.GetNonce(from) != tx.Nonce() {
 			return ErrNonceTooLow
 		}
@@ -563,14 +567,18 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 			return ErrNonceTooLow
 		}
 	}
+
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
+
+	// Sequencer 跳过 intrinsic gas 检查
 	if !rcfg.UsingOVM {
 		// This check is done in SyncService.verifyFee
 		if pool.currentState.GetBalance(from).Cmp(tx.Cost()) < 0 {
 			return ErrInsufficientFunds
 		}
 	}
+
 	// Ensure the transaction has more gas than the basic tx fee.
 	intrGas, err := IntrinsicGas(tx.Data(), tx.To() == nil, true, pool.istanbul)
 	if err != nil {

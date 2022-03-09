@@ -1476,6 +1476,7 @@ func (s *PublicTransactionPoolAPI) GetTransactionReceipt(ctx context.Context, ha
 		"contractAddress":   nil,
 		"logs":              receipt.Logs,
 		"logsBloom":         receipt.Bloom,
+
 		// UsingOVM
 		"l1GasPrice":  (*hexutil.Big)(receipt.L1GasPrice),
 		"l1GasUsed":   (*hexutil.Big)(receipt.L1GasUsed),
@@ -1525,6 +1526,7 @@ type SendTxArgs struct {
 	Data  *hexutil.Bytes `json:"data"`
 	Input *hexutil.Bytes `json:"input"`
 
+	//
 	L1BlockNumber   *big.Int        `json:"l1BlockNumber"`
 	L1MessageSender *common.Address `json:"l1MessageSender"`
 }
@@ -1621,6 +1623,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	if err := b.SendTx(ctx, tx); err != nil {
 		return common.Hash{}, err
 	}
+
 	if tx.To() == nil {
 		signer := types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number())
 		from, err := types.Sender(signer, tx)
@@ -1632,6 +1635,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 	} else {
 		log.Info("Submitted transaction", "fullhash", tx.Hash().Hex(), "recipient", tx.To())
 	}
+
 	return tx.Hash(), nil
 }
 
@@ -1691,10 +1695,12 @@ func (s *PublicTransactionPoolAPI) SendRawTransaction(ctx context.Context, encod
 		return common.Hash{}, err
 	}
 
+	// 如果还在同步中，不处理 RPC 交易
 	if s.b.IsSyncing() {
 		return common.Hash{}, errors.New("Cannot send raw transaction while syncing")
 	}
 
+	// 如果是 verifier ，转发给 sequencer
 	if s.b.IsVerifier() {
 		sequencerURL := s.b.SequencerClientHttp()
 		if sequencerURL == "" {
@@ -1711,9 +1717,11 @@ func (s *PublicTransactionPoolAPI) SendRawTransaction(ctx context.Context, encod
 		return tx.Hash(), nil
 	}
 
+	// 初始化 meta，这里没有分配 index
 	// L1Timestamp and L1BlockNumber will be set right before execution
 	txMeta := types.NewTransactionMeta(nil, 0, nil, types.QueueOriginSequencer, nil, nil, encodedTx)
 	tx.SetTransactionMeta(txMeta)
+
 	return SubmitTransaction(ctx, s.b, tx)
 }
 

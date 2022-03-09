@@ -25,6 +25,7 @@ contract OVM_SequencerFeeVault {
      *************/
 
     // Address on L1 that will hold the fees once withdrawn. Dynamically initialized within l2geth.
+    // 0x391716d440C151C42cdf1C95C1d83A5427Bca52C 未开放源码的合约
     address public l1FeeWallet;
 
     /***************

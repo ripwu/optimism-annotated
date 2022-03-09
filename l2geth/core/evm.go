@@ -46,6 +46,8 @@ func NewEVMContext(msg Message, header *types.Header, chain ChainContext, author
 	} else {
 		beneficiary = *author
 	}
+
+	// 参考 [Differences between Ethereum and Optimism](https://community.optimism.io/docs/developers/build/differences/#)
 	if rcfg.UsingOVM {
 		// When using the OVM, we must:
 		// - Set the Time to be the msg.L1Timestamp
@@ -53,13 +55,26 @@ func NewEVMContext(msg Message, header *types.Header, chain ChainContext, author
 			CanTransfer:   CanTransfer,
 			Transfer:      Transfer,
 			GetHash:       GetHashFn(header, chain),
+
+			// 如果是 L2 -> L2 消息，则未修改
+			// 如果是 L1 -> L2 消息，则可能是 msg.sender 的 alias (如果非 EOA)
 			Origin:        msg.From(),
+
+			// 注意这里矿工收益地址是固定的 0x4200....0011
 			Coinbase:      dump.OvmFeeWallet, // Coinbase is the fee vault.
+
 			BlockNumber:   new(big.Int).Set(header.Number),
+
+			// 使得 opTimestamp 取值是 L1Timestamp
 			Time:          new(big.Int).SetUint64(msg.L1Timestamp()),
+
+			// 固定为 0
 			Difficulty:    new(big.Int), // Difficulty always returns zero.
+
 			GasLimit:      header.GasLimit,
 			GasPrice:      new(big.Int).Set(msg.GasPrice()),
+
+			// 设置 l1BlockNumber
 			L1BlockNumber: msg.L1BlockNumber(),
 		}
 	} else {
