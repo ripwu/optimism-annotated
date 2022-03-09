@@ -41,8 +41,8 @@ func NewGasPricer(curPrice, floorPrice uint64, getTargetGasPerSecond GetTargetGa
 	}, nil
 }
 
-// CalcNextEpochGasPrice calculates the next gas price given some average
-// gas per second over the last epoch
+// CalcNextEpochGasPrice calculates the next gas price given some average gas per second over the last epoch
+// @avgGasPerSecondLastEpoch 上一个 epoch 平均每秒消耗了多少 gas
 func (p *GasPricer) CalcNextEpochGasPrice(avgGasPerSecondLastEpoch float64) (uint64, error) {
 	targetGasPerSecond := p.getTargetGasPerSecond()
 	if avgGasPerSecondLastEpoch < 0 {

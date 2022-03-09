@@ -124,10 +124,13 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
 	// based on the eip phase, we're passing whether the root touch-delete accounts.
 	receipt := types.NewReceipt(root, failed, *usedGas)
+
+	// 修改..
 	receipt.L1GasPrice = l1GasPrice
 	receipt.L1GasUsed = l1GasUsed
 	receipt.L1Fee = l1Fee
 	receipt.FeeScalar = scalar
+
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = gas
 	// if the transaction created a contract, store the creation address in the receipt.

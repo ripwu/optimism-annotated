@@ -31,13 +31,15 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
 
     // TODO: We need to update our events so that we actually have enough information to parse this
     // batch without having to pull out this extra event. For the meantime, we need to find this
-    // "TransactonBatchAppended" event to get the rest of the data.
+    // "TransactionBatchAppended" event to get the rest of the data.
     const CanonicalTransactionChain = getContractFactory(
       'CanonicalTransactionChain'
     )
       .attach(event.address)
       .connect(l1RpcProvider)
 
+    // 当前事件 event 的 topic 是 SequencerBatchAppended
+    // CanonicalTransactionChain.sol 在触发 SequencerBatchAppended 前，还会触发 TransactionBatchAppended
     const batchSubmissionEvent = (
       await CanonicalTransactionChain.queryFilter(
         CanonicalTransactionChain.filters.TransactionBatchAppended(),
@@ -46,10 +48,10 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
       )
     ).find((foundEvent: ethers.Event) => {
       // We might have more than one event in this block, so we specifically want to find a
-      // "TransactonBatchAppended" event emitted immediately before the event in question.
+      // "TransactionBatchAppended" event emitted immediately before the event in question.
       return (
         foundEvent.transactionHash === event.transactionHash &&
-        foundEvent.logIndex === event.logIndex - 1
+        foundEvent.logIndex === event.logIndex - 1 // -1 参考上面注释
       )
     })
 
@@ -85,20 +87,31 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
           `converted buffer length is < 12.`
       )
     }
+
+    // 解析头部 numContexts
     const numContexts = BigNumber.from(calldata.slice(12, 15)).toNumber()
     let transactionIndex = 0
     let enqueuedCount = 0
+
+    // sequence tx 起始地址
     let nextTxPointer = 15 + 16 * numContexts
+
+    // 遍历 contexts
     for (let i = 0; i < numContexts; i++) {
       const contextPointer = 15 + 16 * i
+
+      // 解析 context
       const context = parseSequencerBatchContext(calldata, contextPointer)
 
+      // 先处理 context 内的 L1->L2 交易
       for (let j = 0; j < context.numSequencedTransactions; j++) {
+        // 根据 LV 格式，取出 tx 数据
         const sequencerTransaction = parseSequencerBatchTransaction(
           calldata,
           nextTxPointer
         )
 
+        // 反序列化 tx 数据
         const decoded = decodeSequencerBatchTransaction(
           sequencerTransaction,
           l2ChainId
@@ -109,8 +122,11 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
             .add(BigNumber.from(transactionIndex))
             .toNumber(),
           batchIndex: extraData.batchIndex.toNumber(),
+
+          // 理解 如果 context 内包含 L2->L2 交易，那么 context.blockNumber 一定是 L2->L2 交易的 blockNumber
           blockNumber: BigNumber.from(context.blockNumber).toNumber(),
           timestamp: BigNumber.from(context.timestamp).toNumber(),
+
           gasLimit: BigNumber.from(0).toString(),
           target: constants.AddressZero,
           origin: null,
@@ -123,9 +139,12 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
         })
 
         nextTxPointer += 3 + sequencerTransaction.length
+
+        // 更新全局交易索引
         transactionIndex++
       }
 
+      // 再处理 context 内的 L1->L2 交易
       for (let j = 0; j < context.numSubsequentQueueTransactions; j++) {
         const queueIndex = event.args._startingQueueIndex.add(
           BigNumber.from(enqueuedCount)
@@ -141,12 +160,16 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
             .add(BigNumber.from(transactionIndex))
             .toNumber(),
           batchIndex: extraData.batchIndex.toNumber(),
-          blockNumber: BigNumber.from(0).toNumber(),
           timestamp: context.timestamp,
+
+          // dummy 临时数据，使用中不直接暴露，而是通过 TransportDB 的 查询函数
+          // 在 TransportDB 查询函数内，通过 _makeFullTransaction() 根据 queueIndex 获取对应数据进行填充
+          blockNumber: BigNumber.from(0).toNumber(),
           gasLimit: BigNumber.from(0).toString(),
           target: constants.AddressZero,
           origin: constants.AddressZero,
           data: '0x',
+
           queueOrigin: 'l1',
           value: '0x0',
           queueIndex: queueIndex.toNumber(),
@@ -154,7 +177,10 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
           confirmed: true,
         })
 
+        // 更新 L1->L2 交易索引
         enqueuedCount++
+
+        // 更新全局交易索引
         transactionIndex++
       }
     }
@@ -197,6 +223,7 @@ export const handleEventsSequencerBatchAppended: EventHandlerSet<
     // if they have already been confirmed
     for (const transactionEntry of entry.transactionEntries) {
       if (transactionEntry.queueOrigin === 'l1') {
+        // 建立 queueIndex 到 txIndex 的映射
         await db.putTransactionIndexByQueueIndex(
           transactionEntry.queueIndex,
           transactionEntry.index
@@ -218,29 +245,39 @@ const parseSequencerBatchContext = (
   offset: number
 ): SequencerBatchContext => {
   return {
+    // 3
     numSequencedTransactions: BigNumber.from(
       calldata.slice(offset, offset + 3)
     ).toNumber(),
+
+    // 3
     numSubsequentQueueTransactions: BigNumber.from(
       calldata.slice(offset + 3, offset + 6)
     ).toNumber(),
+
+    // 5
     timestamp: BigNumber.from(
       calldata.slice(offset + 6, offset + 11)
     ).toNumber(),
+
+    // 5
     blockNumber: BigNumber.from(
       calldata.slice(offset + 11, offset + 16)
     ).toNumber(),
   }
 }
 
+// LV 格式
 const parseSequencerBatchTransaction = (
   calldata: Buffer,
   offset: number
 ): Buffer => {
+  // 3 字节长度
   const transactionLength = BigNumber.from(
     calldata.slice(offset, offset + 3)
   ).toNumber()
 
+  // 按长度取 slice
   return calldata.slice(offset + 3, offset + 3 + transactionLength)
 }
 

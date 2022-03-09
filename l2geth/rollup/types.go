@@ -8,7 +8,7 @@ import (
 	"github.com/ethereum-optimism/optimism/l2geth/core/types"
 )
 
-// OVMContext represents the blocknumber and timestamp
+// OVMContext represents the blockNumber and timestamp
 // that exist during L2 execution
 type OVMContext struct {
 	blockNumber uint64
@@ -57,6 +57,7 @@ const (
 )
 
 func isCtcTxEqual(a, b *types.Transaction) bool {
+	// 比较 to
 	if a.To() == nil && b.To() != nil {
 		if !bytes.Equal(b.To().Bytes(), common.Address{}.Bytes()) {
 			return false
@@ -73,9 +74,13 @@ func isCtcTxEqual(a, b *types.Transaction) bool {
 			return false
 		}
 	}
+
+	// 比较 data
 	if !bytes.Equal(a.Data(), b.Data()) {
 		return false
 	}
+
+	// 比较 l1MessageSender
 	if a.L1MessageSender() == nil && b.L1MessageSender() != nil {
 		return false
 	}
@@ -87,8 +92,11 @@ func isCtcTxEqual(a, b *types.Transaction) bool {
 			return false
 		}
 	}
+
+	// 比较 gas
 	if a.Gas() != b.Gas() {
 		return false
 	}
+
 	return true
 }

@@ -218,6 +218,8 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 	}
 	// Subscribe NewTxsEvent for tx pool
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)
+
+	// 监听 rollup.SyncService 的通知，表明有新的交易需要处理
 	// channel directly to the miner
 	worker.rollupSub = eth.SyncService().SubscribeNewTxsEvent(worker.rollupCh)
 
@@ -470,6 +472,8 @@ func (w *worker) mainLoop() {
 					w.commit(uncles, nil, start)
 				}
 			}
+
+		// 处理 rollup.SyncService 发过来的交易，打包区块
 		// Read from the sync service and mine single txs
 		// as they come. Wait for the block to be mined before
 		// reading the next tx from the channel when there is
@@ -479,8 +483,11 @@ func (w *worker) mainLoop() {
 				log.Warn("No transaction sent to miner from syncservice")
 				continue
 			}
+
+			// 一条交易对应一个区块
 			tx := ev.Txs[0]
 			log.Debug("Attempting to commit rollup transaction", "hash", tx.Hash().Hex())
+
 			// Build the block with the tx and add it to the chain. This will
 			// send the block through the `taskCh` and then through the
 			// `resultCh` which ultimately adds the block to the blockchain
@@ -493,7 +500,7 @@ func (w *worker) mainLoop() {
 				// a transaction that cannot be added to the chain, so this
 				// should be updated to a select statement that can also listen
 				// for errors.
-				head := <-w.chainHeadCh
+				head := <-w.chainHeadCh // 阻塞等待
 				txs := head.Block.Transactions()
 				if len(txs) == 0 {
 					log.Warn("No transactions in block")
@@ -920,7 +927,7 @@ func (w *worker) commitTransactionsWithError(txs *types.TransactionsByPriceAndNo
 // It needs to return an error in the case there is an error to prevent waiting
 // on reading from a channel that is written to when a new block is added to the
 // chain.
-func (w *worker) commitNewTx(tx *types.Transaction) error {
+func (w *worker) CanonicalTransactionChaincommitNewTx(tx *types.Transaction) error {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	tstart := time.Now()
@@ -945,6 +952,8 @@ func (w *worker) commitNewTx(tx *types.Transaction) error {
 		meta.Index = &index
 		tx.SetTransactionMeta(meta)
 	}
+
+	// 使用 l1 的区块时间
 	header := &types.Header{
 		ParentHash: parent.Hash(),
 		Number:     new(big.Int).Add(num, common.Big1),
@@ -952,6 +961,7 @@ func (w *worker) commitNewTx(tx *types.Transaction) error {
 		Extra:      w.extra,
 		Time:       tx.L1Timestamp(),
 	}
+
 	if err := w.engine.Prepare(w.chain, header); err != nil {
 		return fmt.Errorf("Failed to prepare header for mining: %w", err)
 	}

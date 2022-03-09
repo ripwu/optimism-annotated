@@ -77,14 +77,36 @@ type transaction struct {
 	Target      common.Address  `json:"target"`
 	Origin      *common.Address `json:"origin"`
 	Data        hexutil.Bytes   `json:"data"`
-	QueueOrigin string          `json:"queueOrigin"`
+	QueueOrigin string          `json:"queueOrigin"` // sequencer 或 l1
 	QueueIndex  *uint64         `json:"queueIndex"`
 	Decoded     *decoded        `json:"decoded"`
 }
 
 // Enqueue represents an `enqueue` transaction or a L1 to L2 transaction.
+// 参考 packages/data-transport-layer/src/services/l1-ingestion/handlers/transaction-enqueued.ts 和合约代码理解
+//  event TransactionEnqueued(
+//     address indexed _l1TxOrigin,
+//     address indexed _target,
+//     uint256 _gasLimit,
+//     bytes _data,
+//     uint256 indexed _queueIndex,
+//     uint256 _timestamp
+// );
+// 对应关系
+// TransactionEnqueued._l1TxOrigin -> Enqueue.Origin
+// TransactionEnqueued._target -> Enqueue.Target
+// TransactionEnqueued._gasLimit -> Enqueue.GasLimit
+// TransactionEnqueued._data -> Enqueue.Data
+// TransactionEnqueued._queueIndex -> Enqueue.QueueIndex
+// TransactionEnqueued._timestamp -> Enqueue.Timestamp // l1 enqueue() 被调用时的区块时间
+//
+// 另外
+// Enqueue.Index CanonicalTransactionChain 两种消息的下标
+// Enqueue.Timestamp l1 enqueue() 被调用时的区块时间
 type Enqueue struct {
+	// 如果 enqueue 未被 SequencerBatchAppended 确认，查询返回的 ctcIndex 应该为 nil，即这里的 Index 为 nil
 	Index       *uint64         `json:"ctcIndex"`
+
 	Target      *common.Address `json:"target"`
 	Data        *hexutil.Bytes  `json:"data"`
 	GasLimit    *uint64         `json:"gasLimit,string"`
@@ -113,6 +135,8 @@ type decoded struct {
 	Target    *common.Address `json:"target"`
 	Data      hexutil.Bytes   `json:"data"`
 }
+
+// API 参考 packages/data-transport-layer/README.md 文档
 
 // RollupClient is able to query for information
 // that is required by the SyncService
@@ -193,6 +217,8 @@ func (c *Client) GetEnqueue(index uint64) (*types.Transaction, error) {
 	if enqueue == nil {
 		return nil, fmt.Errorf("Cannot deserialize enqueue %d", index)
 	}
+
+	// 将 L1 enqueue 事件 转为 L2 交易
 	tx, err := enqueueToTransaction(enqueue)
 	if err != nil {
 		return nil, err
@@ -206,11 +232,17 @@ func enqueueToTransaction(enqueue *Enqueue) (*types.Transaction, error) {
 	if enqueue == nil {
 		return nil, errElementNotFound
 	}
+
 	// When the queue index is nil, is means that the enqueue'd transaction
 	// does not exist.
 	if enqueue.QueueIndex == nil {
 		return nil, errElementNotFound
 	}
+
+	// 注意这里以 QueueIndex 作为 nonce，而 QueueIndex 是 L1->L2 消息全局的，
+	// 也就是说，对于同一 origin 而言，nonce 会不连续。因此需要特殊处理：
+	// 在 StateTransaction.TransitionDb() -> preCheck() 时会跳过 nonce 检查
+
 	// The queue index is the nonce
 	nonce := *enqueue.QueueIndex
 
@@ -223,17 +255,24 @@ func enqueueToTransaction(enqueue *Enqueue) (*types.Transaction, error) {
 		return nil, errors.New("Gas limit not found for enqueue tx")
 	}
 	gasLimit := *enqueue.GasLimit
+
 	if enqueue.Origin == nil {
 		return nil, errors.New("Origin not found for enqueue tx")
 	}
 	origin := *enqueue.Origin
+
 	if enqueue.BlockNumber == nil {
 		return nil, errors.New("Blocknumber not found for enqueue tx")
 	}
+
+	// 使用 L1 enqueue() 调用时的区块号，作为 meta.L1BlockNumber
 	blockNumber := new(big.Int).SetUint64(*enqueue.BlockNumber)
+
 	if enqueue.Timestamp == nil {
 		return nil, errors.New("Timestamp not found for enqueue tx")
 	}
+
+	// 使用 L1 enqueue() 调用时的时间，作为 meta.L1Timestamp
 	timestamp := *enqueue.Timestamp
 
 	if enqueue.Data == nil {
@@ -252,10 +291,14 @@ func enqueueToTransaction(enqueue *Enqueue) (*types.Transaction, error) {
 		timestamp,
 		&origin,
 		types.QueueOriginL1ToL2,
+
+		// 对于未定序的 enqueue 消息，enqueue.Index 为 nil，因此 txMeta.Index 也为 nil
 		enqueue.Index,
+
 		enqueue.QueueIndex,
 		data,
 	)
+
 	tx.SetTransactionMeta(txMeta)
 
 	return tx, nil

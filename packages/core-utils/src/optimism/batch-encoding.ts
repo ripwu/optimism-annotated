@@ -21,10 +21,10 @@ const APPEND_SEQUENCER_BATCH_METHOD_ID = 'appendSequencerBatch()'
 export const encodeAppendSequencerBatch = (
   b: AppendSequencerBatchParams
 ): string => {
-  const encodeShouldStartAtElement = encodeHex(b.shouldStartAtElement, 10)
-  const encodedTotalElementsToAppend = encodeHex(b.totalElementsToAppend, 6)
+  const encodeShouldStartAtElement = encodeHex(b.shouldStartAtElement, 10) // 5
+  const encodedTotalElementsToAppend = encodeHex(b.totalElementsToAppend, 6) // 3
 
-  const encodedContextsHeader = encodeHex(b.contexts.length, 6)
+  const encodedContextsHeader = encodeHex(b.contexts.length, 6) // 3
   const encodedContexts =
     encodedContextsHeader +
     b.contexts.reduce((acc, cur) => acc + encodeBatchContext(cur), '')
@@ -46,12 +46,13 @@ export const encodeAppendSequencerBatch = (
   )
 }
 
+// 这里与 ICanonicalTransactionChain.BatchContext 对不上..
 const encodeBatchContext = (context: BatchContext): string => {
   return (
-    encodeHex(context.numSequencedTransactions, 6) +
-    encodeHex(context.numSubsequentQueueTransactions, 6) +
-    encodeHex(context.timestamp, 10) +
-    encodeHex(context.blockNumber, 10)
+    encodeHex(context.numSequencedTransactions, 6) + // 3
+    encodeHex(context.numSubsequentQueueTransactions, 6) + // 3
+    encodeHex(context.timestamp, 10) + // 5
+    encodeHex(context.blockNumber, 10) // 5
   )
 }
 

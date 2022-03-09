@@ -34,7 +34,7 @@ export const handleSequencerBlock = {
       blockNumber: BigNumber.from(transaction.l1BlockNumber).toNumber(),
       timestamp: BigNumber.from(transaction.l1Timestamp).toNumber(),
       queueOrigin: transaction.queueOrigin,
-      confirmed: false,
+      confirmed: false, // 未提交到 L1
     }
 
     if (transaction.queueOrigin === 'sequencer') {
@@ -95,7 +95,7 @@ export const handleSequencerBlock = {
     const stateRootEntry: StateRootEntry = {
       index: transactionIndex,
       batchIndex: null,
-      value: block.stateRoot,
+      value: block.stateRoot, // 一个区块只有一笔交易，因此区块的 stateRoot 就是这笔交易的 stateRoot
       confirmed: false,
     }
 
@@ -111,6 +111,8 @@ export const handleSequencerBlock = {
     },
     db: TransportDB
   ): Promise<void> => {
+    // 这里的 Unconfirmed，是指还未提交到以太坊，因此未经 L1 确认
+
     // Having separate indices for confirmed/unconfirmed means we never have to worry about
     // accidentally overwriting a confirmed transaction with an unconfirmed one. Unconfirmed
     // transactions are purely extra information.

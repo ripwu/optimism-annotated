@@ -249,12 +249,14 @@ func (c *Clique) verifyHeader(chain consensus.ChainReader, header *types.Header,
 	}
 	number := header.Number.Uint64()
 
+	// Optimism 跳过 区块时间 与 当前时间 的检查
 	if !rcfg.UsingOVM {
 		// Don't waste time checking blocks from the future
 		if header.Time > uint64(time.Now().Unix()) {
 			return consensus.ErrFutureBlock
 		}
 	}
+
 	// Checkpoint blocks need to enforce zero beneficiary
 	checkpoint := (number % c.config.Epoch) == 0
 	if checkpoint && header.Coinbase != (common.Address{}) {
@@ -325,6 +327,7 @@ func (c *Clique) verifyCascadingFields(chain consensus.ChainReader, header *type
 		return consensus.ErrUnknownAncestor
 	}
 
+	// Optimism 跳过 区块时间 与 父区块时间 的检查..
 	// Do not account for timestamps in consensus when running the OVM
 	// changes. The timestamp must be montonic, meaning that it can be the same
 	// or increase. L1 dictates the timestamp.
@@ -332,8 +335,8 @@ func (c *Clique) verifyCascadingFields(chain consensus.ChainReader, header *type
 		if parent.Time+c.config.Period > header.Time {
 			return ErrInvalidTimestamp
 		}
-
 	}
+
 	// Retrieve the snapshot needed to verify this header and cache it
 	snap, err := c.snapshot(chain, number-1, header.ParentHash, parents)
 	if err != nil {

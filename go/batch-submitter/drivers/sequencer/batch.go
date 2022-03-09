@@ -38,7 +38,7 @@ func (b *BatchElement) IsSequencerTx() bool {
 
 // BatchElementFromBlock constructs a BatchElement from a single L2 block. This
 // method expects that there is exactly ONE tx per block. The returned
-// BatchElement will reflect whether or not the lone tx is a sequencer tx or a
+// BatchElement will reflect whether or not the alone tx is a sequencer tx or a
 // queued tx.
 func BatchElementFromBlock(block *l2types.Block) BatchElement {
 	txs := block.Transactions()
@@ -90,7 +90,7 @@ func GenSequencerBatchParams(
 	)
 
 	// Iterate over the batch elements, grouping the elements according to
-	// the following critera:
+	// the following criteria:
 	//  - All txs in the same group must have the same timestamp.
 	//  - All sequencer txs in the same group must have the same block number.
 	//  - If sequencer txs exist in a group, they must come before all
@@ -99,12 +99,16 @@ func GenSequencerBatchParams(
 	// Assuming the block and timestamp criteria for sequencer txs are
 	// respected within each group, the following are examples of groupings:
 	//  - [s]         // sequencer can exist by itself
-	//  - [q]         // ququed tx can exist by itself
-	//  - [s] [s]     // differing sequencer tx timestamp/blocknumber
+	//  - [q]         // queued tx can exist by itself
+	//  - [s] [s]     // differing sequencer tx timestamp/block number
 	//  - [s q] [s]   // sequencer tx must precede queued tx in group
 	//  - [q] [q s]   // INVALID: consecutive queued txs are split
 	//  - [q q] [s]   // correct split for preceding case
 	//  - [s q] [s q] // alternating sequencer tx interleaved with queued
+
+	// 参考 [How does Optimism's Rollup really work? #Data Availability Batches]
+	// (https://research.paradigm.xyz/optimism#data-availability-batches)
+
 	for _, el := range batch {
 		// To enforce the above groupings, the following condition is
 		// used to determine when to create a new batch:
@@ -115,7 +119,7 @@ func GenSequencerBatchParams(
 		//    - The preceding sequencer tx has a different block number.
 		// Note that a sequencer tx is usually required to create a new group,
 		// so a queued tx may ONLY exist as the first element in a group if it
-		// is the very first element or it has a different timestamp from the
+		// is the very first element, or it has a different timestamp from the
 		// preceding tx.
 		needsNewGroupOnSequencerTx := !lastBlockIsSequencerTx ||
 			el.BlockNumber != lastBlockNumber
@@ -161,7 +165,7 @@ func GenSequencerBatchParams(
 		// using either the earliest sequenced tx or the earliest queued
 		// tx. If a batch has a sequencer tx it is given preference,
 		// since it is guaranteed to be the earliest item in the group.
-		// Otherwise, we fallback to the earliest queued tx since it was
+		// Otherwise, we fall back to the earliest queued tx since it was
 		// the very first item.
 		var (
 			timestamp   uint64
@@ -184,9 +188,15 @@ func GenSequencerBatchParams(
 	}
 
 	return &AppendSequencerBatchParams{
+		// 从哪个区块开始
 		ShouldStartAtElement:  shouldStartAtElement - blockOffset,
+
+		// 此次提交的区块数
 		TotalElementsToAppend: uint64(len(batch)),
+
 		Contexts:              contexts,
+
+		// 这些区块中的 sequenced tx
 		Txs:                   txs,
 	}, nil
 }

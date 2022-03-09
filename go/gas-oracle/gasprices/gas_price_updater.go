@@ -78,6 +78,7 @@ func (g *GasPriceUpdater) UpdateGasPrice() error {
 		totalGasUsed += gasUsed
 	}
 
+	// L1 平均每秒消耗多少 gas
 	averageGasPerSecond := float64(totalGasUsed) / float64(g.epochLengthSeconds)
 
 	log.Debug("UpdateGasPrice", "average-gas-per-second", averageGasPerSecond, "current-price", g.gasPricer.curPrice)

@@ -669,11 +669,29 @@ export class TransactionBatchSubmitter extends BatchSubmitter {
     throw new Error('Unable to fix queue element!')
   }
 
+  // 参考 [How does Optimism's Rollup really work? #Data Availability Batches]
+  // (https://research.paradigm.xyz/optimism#data-availability-batches)
   private async _getSequencerBatchParams(
     shouldStartAtIndex: number,
     blocks: Batch
   ): Promise<AppendSequencerBatchParams> {
     const totalElementsToAppend = blocks.length
+
+    // 下面这段文档似乎过期 VVV
+    // 假设 CTC 收到的交易 (batch / queue) 为
+    // [
+    //     (sequencer, T1),
+    //     (sequencer, T1),
+    //     (queue, T2),
+    //     (sequencer, T2),
+    //     (queue, T3),
+    //     (queue, T4)
+    // ]
+    // 得到的 contexts 为
+    // [
+    //     {numSequencedTransactions: 2, numSubsequentQueueTransactions: 1, timestamp: T1},
+    //     {numSequencedTransactions: 1, numSubsequentQueueTransactions: 2, timestamp: T2}
+    // ]
 
     // Generate contexts
     const contexts: BatchContext[] = []
@@ -686,7 +704,38 @@ export class TransactionBatchSubmitter extends BatchSubmitter {
     }> = []
     for (const block of blocks) {
       // Create a new context in certain situations
+      // 与之前区块比较，将区块按不同的 context 分组
       if (
+        // 与 go 实现 GenSequencerBatchParams() 对照理解 go/batch-submitter/drivers/sequencer/batch.go
+        //
+        // Iterate over the batch elements, grouping the elements according to
+        // the following criteria:
+        //  - All txs in the same group must have the same timestamp.
+        //  - All sequencer txs in the same group must have the same block number.
+        //  - If sequencer txs exist in a group, they must come before all queued txs.
+        //
+        // Assuming the block and timestamp criteria for sequencer txs are
+        // respected within each group, the following are examples of groupings:
+        //  - [s]         // sequencer can exist by itself
+        //  - [q]         // queued tx can exist by itself
+        //  - [s] [s]     // differing sequencer tx timestamp/block number
+        //  - [s q] [s]   // sequencer tx must precede queued tx in group
+        //  - [q] [q s]   // INVALID: consecutive queued txs are split
+        //  - [q q] [s]   // correct split for preceding case
+        //  - [s q] [s q] // alternating sequencer tx interleaved with queued
+        //
+        // To enforce the above groupings, the following condition is
+        // used to determine when to create a new batch:
+        //  - On the first pass, or
+        //  - The preceding tx has a different timestamp, or
+        //  - Whenever a sequencer tx is observed, and:
+        //    - The preceding tx was a queued tx, or
+        //    - The preceding sequencer tx has a different block number.
+        // Note that a sequencer tx is usually required to create a new group,
+        // so a queued tx may ONLY exist as the first element in a group if it
+        // is the very first element, or it has a different timestamp from the
+        // preceding tx.
+
         // If there are no contexts yet, create a new context.
         groupedBlocks.length === 0 ||
         // If the last block was an L1 to L2 transaction, but the next block is a Sequencer
@@ -713,6 +762,8 @@ export class TransactionBatchSubmitter extends BatchSubmitter {
       lastTimestamp = block.timestamp
       lastBlockNumber = block.blockNumber
     }
+
+    // 根据分组，创建 context
     for (const groupedBlock of groupedBlocks) {
       if (
         groupedBlock.sequenced.length === 0 &&
@@ -723,6 +774,7 @@ export class TransactionBatchSubmitter extends BatchSubmitter {
         )
       }
       contexts.push({
+        // 一个区块只有一笔交易，但多个区块可能属于相同 context (这些区块都是 L1->L2 交易且有相同 timestamp)
         numSequencedTransactions: groupedBlock.sequenced.length,
         numSubsequentQueueTransactions: groupedBlock.queued.length,
         timestamp:
@@ -739,6 +791,7 @@ export class TransactionBatchSubmitter extends BatchSubmitter {
     // Generate sequencer transactions
     const transactions: string[] = []
     for (const block of blocks) {
+      // 注意只包含 L2 上的交易
       if (!block.isSequencerTx) {
         continue
       }
